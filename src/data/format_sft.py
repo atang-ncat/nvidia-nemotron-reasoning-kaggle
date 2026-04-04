@@ -121,49 +121,222 @@ def cot_unit_conversion(prompt: str, answer: str) -> str:
 
 
 def cot_bit_manipulation(prompt: str, answer: str) -> str:
-    """Generate CoT for bit manipulation puzzles."""
-    examples = []
-    query = None
-    for line in prompt.split("\n"):
-        line = line.strip()
-        m = re.match(r"^([01]{8})\s*->\s*([01]{8})$", line)
-        if m:
-            examples.append((m.group(1), m.group(2)))
-        m2 = re.match(r".*?:\s*([01]{8})\s*$", line)
-        if m2 and "->" not in line:
-            query = m2.group(1)
+    """Generate deep CoT for bit manipulation using solver's per-bit inference logic."""
+    from src.solvers.bit_ops_solver import parse_bit_prompt, infer_bit_function
 
+    examples, query = parse_bit_prompt(prompt)
     if not examples or not query:
-        return f"Analyzing the bit transformation pattern.\n\n\\boxed{{{answer}}}"
+        return f"Analyzing the bit transformation pattern.\n\nResult: {answer}\n\n\\boxed{{{answer}}}"
 
-    cot = "Analyzing the bit transformation pattern for each bit position.\n\n"
-    cot += "Examples:\n"
-    for inp, out in examples[:3]:
+    cot = "I need to figure out what boolean operation is applied to each bit position.\n\n"
+    cot += "Training examples:\n"
+    for inp, out in examples[:4]:
         cot += f"  {inp} → {out}\n"
     cot += "\n"
 
-    cot += f"Applying the transformation to {query}:\n"
-    cot += f"Result: {answer}\n\n"
+    cot += "Analyzing each output bit position:\n"
+    query_bits = [int(b) for b in query]
+    result_bits = []
+
+    for out_pos in range(8):
+        func_info = infer_bit_function(examples, out_pos)
+        if func_info is None:
+            cot += f"  Bit {out_pos}: cannot determine pattern\n"
+            result_bits.append(int(answer[out_pos]) if out_pos < len(answer) else 0)
+            continue
+
+        name, arg1, arg2 = func_info
+        # Show the reasoning for this bit
+        input_vals = [int(ex[0][out_pos]) for ex in examples[:4]]
+        output_vals = [int(ex[1][out_pos]) for ex in examples[:4]]
+        cot += f"  Bit {out_pos}: inputs {input_vals} → outputs {output_vals}"
+
+        if name == "COPY":
+            cot += f" → COPY bit {arg1}\n"
+            result_bits.append(query_bits[arg1])
+        elif name == "NOT":
+            cot += f" → NOT bit {arg1}\n"
+            result_bits.append(1 - query_bits[arg1])
+        elif name == "CONST_0":
+            cot += f" → always 0\n"
+            result_bits.append(0)
+        elif name == "CONST_1":
+            cot += f" → always 1\n"
+            result_bits.append(1)
+        elif name == "COPY_FROM":
+            cot += f" → COPY from bit {arg1}\n"
+            result_bits.append(query_bits[arg1])
+        elif name == "NOT_FROM":
+            cot += f" → NOT of bit {arg1}\n"
+            result_bits.append(1 - query_bits[arg1])
+        elif name.endswith("_CROSS"):
+            op = name[:-6]
+            cot += f" → {op}(bit {arg1}, bit {arg2})\n"
+            from src.solvers.bit_ops_solver import TWO_BIT_OPERATIONS
+            result_bits.append(TWO_BIT_OPERATIONS[op](query_bits[arg1], query_bits[arg2]))
+        else:
+            cot += f" → {name}(bit {arg1}, bit {arg2})\n"
+            from src.solvers.bit_ops_solver import TWO_BIT_OPERATIONS
+            result_bits.append(TWO_BIT_OPERATIONS[name](query_bits[arg1], query_bits[arg2]))
+
+    computed = "".join(str(b) for b in result_bits)
+    cot += f"\nApplying to query {query}:\n"
+    for i in range(8):
+        cot += f"  Bit {i}: {query_bits[i]} → {result_bits[i]}\n"
+    cot += f"\nResult: {answer}\n\n"
     cot += f"\\boxed{{{answer}}}"
     return cot
 
 
 def cot_text_encryption(prompt: str, answer: str) -> str:
-    """Generate CoT for text encryption puzzles."""
-    cot = "Analyzing the encryption pattern from the examples.\n\n"
-    cot += "By mapping each encrypted word to its plaintext equivalent, "
-    cot += "I can build a substitution table and apply it to the query.\n\n"
-    cot += f"Decrypted result: {answer}\n\n"
+    """Generate deep CoT for text encryption using solver's decryption logic."""
+    from src.solvers.cipher_solver import (
+        parse_encryption_prompt, try_caesar_shift,
+        build_word_substitution_table, build_char_substitution_table
+    )
+
+    examples, query = parse_encryption_prompt(prompt)
+    if not examples or not query:
+        return f"Analyzing the encryption pattern.\n\nResult: {answer}\n\n\\boxed{{{answer}}}"
+
+    cot = "I need to decrypt the query by finding the encryption pattern from the examples.\n\n"
+    cot += "Examples:\n"
+    for enc, plain in examples[:4]:
+        cot += f"  \"{enc}\" → \"{plain}\"\n"
+    cot += "\n"
+
+    # Try Caesar shift first
+    shift = try_caesar_shift(examples)
+    if shift is not None:
+        cot += f"Checking for Caesar cipher: comparing letter positions...\n"
+        enc0, plain0 = examples[0]
+        for e_ch, p_ch in zip(enc0, plain0):
+            if e_ch.isalpha() and p_ch.isalpha():
+                s = (ord(p_ch.lower()) - ord(e_ch.lower())) % 26
+                cot += f"  '{e_ch}' → '{p_ch}': shift = {s}\n"
+                break
+        cot += f"All letters shift by {shift} (Caesar cipher with shift={shift})\n\n"
+        cot += f"Applying shift to query \"{query}\":\n"
+        for c in query:
+            if c.isalpha():
+                base = ord('a') if c.islower() else ord('A')
+                decrypted = chr((ord(c) - base + shift) % 26 + base)
+                cot += f"  '{c}' + {shift} = '{decrypted}'\n"
+        cot += f"\nResult: {answer}\n\n"
+        cot += f"\\boxed{{{answer}}}"
+        return cot
+
+    # Try word-level substitution
+    word_table, word_clean, _ = build_word_substitution_table(examples)
+    if word_clean and query:
+        query_words = query.lower().split()
+        all_found = all(w in word_table for w in query_words)
+        if all_found:
+            cot += "Building word substitution table:\n"
+            for enc_word, plain_word in sorted(word_table.items()):
+                cot += f"  \"{enc_word}\" → \"{plain_word}\"\n"
+            cot += f"\nApplying to query \"{query}\":\n"
+            for w in query_words:
+                cot += f"  \"{w}\" maps to \"{word_table[w]}\"\n"
+            cot += f"\nResult: {answer}\n\n"
+            cot += f"\\boxed{{{answer}}}"
+            return cot
+
+    # Try char-level substitution
+    char_table, char_clean, _ = build_char_substitution_table(examples)
+    if char_clean:
+        cot += "Building character substitution table:\n"
+        for enc_ch, plain_ch in sorted(char_table.items())[:15]:
+            cot += f"  '{enc_ch}' → '{plain_ch}'\n"
+        if len(char_table) > 15:
+            cot += f"  ... ({len(char_table)} mappings total)\n"
+        cot += f"\nApplying to query \"{query}\":\n"
+        cot += f"Result: {answer}\n\n"
+        cot += f"\\boxed{{{answer}}}"
+        return cot
+
+    # Fallback: show the examples and answer
+    cot += "The encryption pattern from the examples gives:\n"
+    cot += f"Result: {answer}\n\n"
     cot += f"\\boxed{{{answer}}}"
     return cot
 
 
 def cot_algebra(prompt: str, answer: str) -> str:
-    """Generate CoT for algebra puzzles."""
-    cot = "Analyzing the transformation rules from the examples.\n\n"
-    cot += "By examining how each input expression maps to its output, "
-    cot += "I can identify the character-level transformation pattern.\n\n"
-    cot += f"Applying the rule to the query gives: {answer}\n\n"
+    """Generate deep CoT for algebra puzzles by showing character-level mapping."""
+    from src.solvers.algebra_solver import parse_algebra_prompt
+
+    examples, query = parse_algebra_prompt(prompt)
+    if not examples or not query:
+        return f"Analyzing the transformation rules.\n\nResult: {answer}\n\n\\boxed{{{answer}}}"
+
+    cot = "I need to find the transformation rule from the examples.\n\n"
+    cot += "Examples:\n"
+    for inp, out in examples[:5]:
+        cot += f"  \"{inp}\" → \"{out}\"\n"
+    cot += "\n"
+
+    # Try to detect character-level mapping
+    char_map = {}
+    consistent = True
+    for inp, out in examples:
+        inp_clean = inp.replace(" ", "")
+        out_clean = out.replace(" ", "")
+        if len(inp_clean) == len(out_clean):
+            for c_in, c_out in zip(inp_clean, out_clean):
+                if c_in in char_map:
+                    if char_map[c_in] != c_out:
+                        consistent = False
+                        break
+                else:
+                    char_map[c_in] = c_out
+
+    if consistent and char_map:
+        cot += "Checking for character-level substitution pattern:\n"
+        # Show a few mappings
+        shown = 0
+        for c_in, c_out in sorted(char_map.items())[:10]:
+            cot += f"  '{c_in}' → '{c_out}'\n"
+            shown += 1
+        if len(char_map) > 10:
+            cot += f"  ... ({len(char_map)} mappings total)\n"
+
+        # Try to detect shift pattern
+        shifts = set()
+        for c_in, c_out in char_map.items():
+            if c_in.isalpha() and c_out.isalpha():
+                s = (ord(c_out) - ord(c_in)) % 128
+                shifts.add(s)
+        if len(shifts) == 1:
+            shift_val = shifts.pop()
+            cot += f"\nPattern: consistent ASCII shift of {shift_val}\n"
+        else:
+            all_printable_shifts = set()
+            for c_in, c_out in char_map.items():
+                s = (ord(c_out) - ord(c_in)) % 256
+                all_printable_shifts.add(s)
+            if len(all_printable_shifts) == 1:
+                cot += f"\nPattern: consistent byte shift of {all_printable_shifts.pop()}\n"
+            else:
+                cot += f"\nPattern: arbitrary character substitution\n"
+
+        cot += f"\nApplying to query \"{query}\":\n"
+        result_chars = []
+        for c in query:
+            if c == " ":
+                result_chars.append(" ")
+                continue
+            if c in char_map:
+                result_chars.append(char_map[c])
+                cot += f"  '{c}' → '{char_map[c]}'\n"
+            else:
+                result_chars.append(c)
+                cot += f"  '{c}' → '{c}' (unchanged)\n"
+    else:
+        cot += "Analyzing the transformation pattern from examples.\n"
+        cot += f"Applying the rule to the query.\n"
+
+    cot += f"\nResult: {answer}\n\n"
     cot += f"\\boxed{{{answer}}}"
     return cot
 

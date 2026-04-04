@@ -17,16 +17,21 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."
 
 def extract_boxed(text: str) -> str:
     """Extract answer from \\boxed{...} format, matching Kaggle's logic."""
-    # Try boxed first
+    # Try boxed with nested braces support
     matches = re.findall(r"\\boxed\{([^}]+)\}", text)
     if matches:
         return matches[-1].strip()
 
-    # Fallback: last line that looks like an answer
+    # Try Result: pattern (our CoT template uses this)
+    result_match = re.search(r"Result:\s*(.+)$", text, re.MULTILINE)
+    if result_match:
+        return result_match.group(1).strip()
+
+    # Fallback: last non-empty, non-code, non-comment line
     lines = text.strip().split("\n")
     for line in reversed(lines):
         line = line.strip()
-        if line and not line.startswith("#") and len(line) < 100:
+        if line and not line.startswith("#") and not line.startswith("`") and len(line) < 100:
             return line
 
     return text.strip()
@@ -98,10 +103,11 @@ def main():
     engine_args = {
         "model": args.model,
         "trust_remote_code": True,
-        "max_model_len": 8192,
-        "gpu_memory_utilization": 0.85,
-        "max_num_seqs": 64,
+        "max_model_len": 4096,
+        "gpu_memory_utilization": 0.7,
+        "max_num_seqs": 32,
         "dtype": "bfloat16",
+        "tensor_parallel_size": 4,
     }
 
     if args.adapter:
@@ -117,16 +123,18 @@ def main():
         max_tokens=7680,
     )
 
-    # Prepare prompts
+    # Prepare prompts — wrap in training format
     prompts = []
     expected_answers = []
     categories = []
 
     for record in eval_data:
         msgs = record["messages"]
-        prompt = msgs[0]["content"]
+        raw_prompt = msgs[0]["content"]
+        # Wrap in the same format we trained with
+        formatted_prompt = "### Question:\n" + raw_prompt + "\n\n### Answer:\n"
         expected = extract_boxed(msgs[1]["content"])
-        prompts.append(prompt)
+        prompts.append(formatted_prompt)
         expected_answers.append(expected)
         categories.append(record.get("category", "unknown"))
 

@@ -25,7 +25,7 @@ from trl import SFTTrainer, SFTConfig
 # ---- Configuration ---- #
 MODEL_NAME = "/scratch2/atang/competitions/nemotron-kaggle/models/nemotron-base"
 DATA_DIR = "/scratch2/atang/competitions/nemotron-kaggle/data"
-OUTPUT_DIR = "/scratch2/atang/competitions/nemotron-kaggle/outputs/sft_v1"
+OUTPUT_DIR = "/scratch2/atang/competitions/nemotron-kaggle/outputs/sft_v2"
 
 # LoRA config (rank must be <= 32 per competition rules)
 LORA_R = 32
@@ -96,7 +96,7 @@ def main():
     print("  GPU memory allocation:")
     for i in range(torch.cuda.device_count()):
         alloc = torch.cuda.memory_allocated(i) / 1e9
-        total = torch.cuda.get_device_properties(i).total_mem / 1e9
+        total = torch.cuda.get_device_properties(i).total_memory / 1e9
         print(f"    GPU {i}: {alloc:.1f}GB / {total:.1f}GB")
 
     # 3. LoRA
