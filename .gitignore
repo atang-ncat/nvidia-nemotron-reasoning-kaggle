@@ -1,0 +1,27 @@
+# Data files
+data/raw/
+data/curated/
+data/sft_*.jsonl
+data/synthetic/
+
+# Model weights
+models/
+.hf_cache/
+
+# Training outputs
+outputs/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+*.egg-info/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
