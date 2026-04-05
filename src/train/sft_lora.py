@@ -25,7 +25,7 @@ from trl import SFTTrainer, SFTConfig
 # ---- Configuration ---- #
 MODEL_NAME = "/scratch2/atang/competitions/nemotron-kaggle/models/nemotron-base"
 DATA_DIR = "/scratch2/atang/competitions/nemotron-kaggle/data"
-OUTPUT_DIR = "/scratch2/atang/competitions/nemotron-kaggle/outputs/sft_v2"
+OUTPUT_DIR = "/scratch2/atang/competitions/nemotron-kaggle/outputs/sft_v3"
 
 # LoRA config (rank must be <= 32 per competition rules)
 LORA_R = 32
