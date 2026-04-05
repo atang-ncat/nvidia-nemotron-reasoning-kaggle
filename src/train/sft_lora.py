@@ -25,7 +25,7 @@ from trl import SFTTrainer, SFTConfig
 # ---- Configuration ---- #
 MODEL_NAME = "/scratch2/atang/competitions/nemotron-kaggle/models/nemotron-base"
 DATA_DIR = "/scratch2/atang/competitions/nemotron-kaggle/data"
-OUTPUT_DIR = "/scratch2/atang/competitions/nemotron-kaggle/outputs/sft_v3"
+OUTPUT_DIR = "/scratch2/atang/competitions/nemotron-kaggle/outputs/sft_v4"
 
 # LoRA config (rank must be <= 32 per competition rules)
 LORA_R = 32
@@ -36,10 +36,10 @@ LORA_TARGET_MODULES = [
     "gate_proj", "up_proj", "down_proj",
 ]
 
-# Training config — MAXIMIZED for 4x48GB GPUs
+# Training config — pipeline parallel (device_map=auto) with 4x48GB GPUs
 NUM_EPOCHS = 3
-BATCH_SIZE = 8          # per-device batch size (was 4, doubled)
-GRADIENT_ACCUMULATION_STEPS = 4   # effective batch = 8 * 4 = 32
+BATCH_SIZE = 6          # per-device batch size
+GRADIENT_ACCUMULATION_STEPS = 5   # effective batch = 6 * 5 = 30
 LEARNING_RATE = 2e-4
 MAX_SEQ_LENGTH = 2048
 WARMUP_RATIO = 0.03

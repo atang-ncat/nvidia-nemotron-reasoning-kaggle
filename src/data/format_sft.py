@@ -362,7 +362,55 @@ def format_chat_template(prompt: str, completion: str) -> dict:
     }
 
 
+def load_llm_cot() -> dict:
+    """Load LLM-generated CoT traces from all model directories."""
+    llm_cot = {}  # id -> best CoT trace
+    cot_dirs = [
+        os.path.join(DATA_DIR, "nemotron_cot"),
+        os.path.join(DATA_DIR, "deepseek_cot"),
+        os.path.join(DATA_DIR, "qwen_cot"),
+        os.path.join(DATA_DIR, "gemini_cot"),
+    ]
+
+    for cot_dir in cot_dirs:
+        if not os.path.isdir(cot_dir):
+            continue
+        for fname in os.listdir(cot_dir):
+            if not fname.endswith(".jsonl"):
+                continue
+            path = os.path.join(cot_dir, fname)
+            with open(path) as f:
+                for line in f:
+                    r = json.loads(line)
+                    if r.get("cot_status") not in ("success", "fixed"):
+                        continue
+                    rid = r["id"]
+                    # Prefer "success" over "fixed", and longer CoT over shorter
+                    if rid not in llm_cot:
+                        llm_cot[rid] = r["cot"]
+                    elif r["cot_status"] == "success" and len(r["cot"]) > len(llm_cot[rid]):
+                        llm_cot[rid] = r["cot"]
+
+    return llm_cot
+
+
+def load_synthetic_data() -> list:
+    """Load synthetic training puzzles."""
+    synth_path = os.path.join(DATA_DIR, "synthetic.jsonl")
+    if not os.path.exists(synth_path):
+        return []
+    records = []
+    with open(synth_path) as f:
+        for line in f:
+            records.append(json.loads(line))
+    return records
+
+
 def main():
+    # Load LLM-generated CoT
+    llm_cot = load_llm_cot()
+    print(f"  Loaded {len(llm_cot)} LLM-generated CoT traces")
+
     # Load all curated data
     datasets = {}
     for name in ["verified", "corrected", "unverified"]:
@@ -376,21 +424,48 @@ def main():
 
     # Merge and generate CoT
     all_records = []
+    llm_used = 0
     for source_name, records in datasets.items():
         for record in records:
             cat = record["category"]
             answer = record["answer"]
             prompt = record["prompt"]
+            rid = record["id"]
 
-            # Generate CoT reasoning
-            cot_gen = COT_GENERATORS.get(cat, cot_algebra)
-            completion = cot_gen(prompt, answer)
+            # Use LLM CoT if available (especially for algebra)
+            if rid in llm_cot:
+                completion = llm_cot[rid]
+                llm_used += 1
+            else:
+                cot_gen = COT_GENERATORS.get(cat, cot_algebra)
+                completion = cot_gen(prompt, answer)
 
             formatted = format_chat_template(prompt, completion)
-            formatted["id"] = record["id"]
+            formatted["id"] = rid
             formatted["category"] = cat
             formatted["source"] = source_name
             all_records.append(formatted)
+
+    print(f"  LLM CoT used for {llm_used} examples (replacing template CoT)")
+
+    # Add synthetic data
+    synth_records = load_synthetic_data()
+    for record in synth_records:
+        cat = record["category"]
+        answer = record["answer"]
+        prompt = record["prompt"]
+
+        cot_gen = COT_GENERATORS.get(cat, cot_algebra)
+        completion = cot_gen(prompt, answer)
+
+        formatted = format_chat_template(prompt, completion)
+        formatted["id"] = record["id"]
+        formatted["category"] = cat
+        formatted["source"] = "synthetic"
+        all_records.append(formatted)
+
+    if synth_records:
+        print(f"  Added {len(synth_records)} synthetic examples")
 
     # Shuffle
     random.seed(42)
@@ -420,6 +495,11 @@ def main():
     cat_counts = Counter(r["category"] for r in train_records)
     for cat, count in sorted(cat_counts.items()):
         print(f"  {cat:20s}: {count:5d}")
+
+    source_counts = Counter(r["source"] for r in train_records)
+    print(f"\n📊 Source breakdown (train):")
+    for src, count in sorted(source_counts.items()):
+        print(f"  {src:20s}: {count:5d}")
 
     # Show a sample
     print(f"\n📝 Sample formatted example:")
