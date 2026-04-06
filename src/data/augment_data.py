@@ -102,7 +102,7 @@ def generate_bit_puzzle():
     prompt = "In Wonderland, there is a secret machine that transforms 8-bit binary strings.\n"
     prompt += "Given examples of input → output transformations:\n\n"
     for inp, out in train_examples:
-        prompt += f"{inp} → {out}\n"
+        prompt += f"{inp} -> {out}\n"
     prompt += f"\nDetermine the result for: {query_inp}"
 
     return {
@@ -128,20 +128,22 @@ ALGEBRA_OPS = {
     "mul_p1": lambda a, b: a * b + 1,
     "mul_m1": lambda a, b: a * b - 1,
     "xor": lambda a, b: a ^ b,
+    "max_val": lambda a, b: max(a, b),
+    "min_val": lambda a, b: min(a, b),
+    "digit_sum_add": lambda a, b: sum(int(d) for d in str(a)) + sum(int(d) for d in str(b)),
+    "first_a_last_b": lambda a, b: int(str(a)[0] + str(b)[-1]),
+    "reverse_add": lambda a, b: int(str(a)[::-1]) + int(str(b)[::-1]),
 }
 
 
 def generate_algebra_puzzle():
     """Generate a single algebra puzzle with a known operation."""
-    # Pick a random operator symbol
     op_symbols = list("@#$%^&*!?<>~|{}[]`'\"\\:;")
     op_char = random.choice(op_symbols)
 
-    # Pick a random operation
     op_name = random.choice(list(ALGEBRA_OPS.keys()))
     op_func = ALGEBRA_OPS[op_name]
 
-    # Generate 4-6 examples + 1 query, all using the same operator
     n_examples = random.randint(4, 6)
     examples = []
     for _ in range(n_examples + 1):
@@ -153,7 +155,6 @@ def generate_algebra_puzzle():
     train_examples = examples[:-1]
     qa, qb, q_answer = examples[-1]
 
-    # Build prompt (single-operator format)
     prompt = "In Wonderland, a secret function transforms pairs of numbers.\n"
     prompt += "Given examples:\n\n"
     for a, b, out in train_examples:
@@ -169,22 +170,70 @@ def generate_algebra_puzzle():
     }
 
 
+def generate_multi_op_algebra_puzzle():
+    """Generate multi-operator algebra puzzle (closer to real test distribution).
+
+    Real algebra puzzles often have 2-3 different operators in one prompt.
+    The model must figure out what each operator does from context.
+    """
+    n_ops = random.randint(2, 3)
+    op_symbols = random.sample(list("@#$%^&*!?<>~|"), n_ops)
+    op_names = random.sample(list(ALGEBRA_OPS.keys()), n_ops)
+    op_funcs = {sym: ALGEBRA_OPS[name] for sym, name in zip(op_symbols, op_names)}
+
+    all_examples = []
+    for sym, func in op_funcs.items():
+        n = random.randint(2, 4)
+        for _ in range(n):
+            a = random.randint(10, 99)
+            b = random.randint(10, 99)
+            result = func(a, b)
+            all_examples.append((a, sym, b, str(result)))
+
+    random.shuffle(all_examples)
+
+    query_sym = random.choice(op_symbols)
+    qa = random.randint(10, 99)
+    qb = random.randint(10, 99)
+    q_answer = str(op_funcs[query_sym](qa, qb))
+
+    prompt = "In Wonderland, secret functions transform pairs of numbers.\n"
+    prompt += "Given examples:\n\n"
+    for a, sym, b, out in all_examples:
+        prompt += f"{a}{sym}{b} = {out}\n"
+    prompt += f"\nDetermine the result for: {qa}{query_sym}{qb}"
+
+    return {
+        "category": "algebra",
+        "prompt": prompt,
+        "answer": q_answer,
+        "id": f"synth_malg_{random.randint(100000,999999)}",
+        "source": "synthetic",
+    }
+
+
 def main():
     random.seed(42)
 
     records = []
 
     # Generate bit_manipulation puzzles
-    print("🔧 Generating bit_manipulation puzzles...")
-    for i in range(2000):
+    print("Generating bit_manipulation puzzles...")
+    for i in range(2500):
         records.append(generate_bit_puzzle())
-    print(f"  ✅ {2000} bit_manipulation puzzles")
+    print(f"  {2500} bit_manipulation puzzles")
 
-    # Generate algebra puzzles
-    print("🔧 Generating algebra puzzles...")
-    for i in range(1000):
+    # Generate algebra puzzles (single-operator)
+    print("Generating algebra puzzles (single-op)...")
+    for i in range(1500):
         records.append(generate_algebra_puzzle())
-    print(f"  ✅ {1000} algebra puzzles")
+    print(f"  {1500} single-op algebra puzzles")
+
+    # Generate algebra puzzles (multi-operator, closer to real distribution)
+    print("Generating algebra puzzles (multi-op)...")
+    for i in range(1000):
+        records.append(generate_multi_op_algebra_puzzle())
+    print(f"  {1000} multi-op algebra puzzles")
 
     # Shuffle
     random.shuffle(records)

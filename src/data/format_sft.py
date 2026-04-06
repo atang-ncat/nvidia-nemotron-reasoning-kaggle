@@ -352,11 +352,18 @@ COT_GENERATORS = {
 }
 
 
+BOXED_INSTRUCTION = "\n\nPlease put your final answer inside \\boxed{}. For example: \\boxed{your answer}"
+
+
 def format_chat_template(prompt: str, completion: str) -> dict:
-    """Format a single example into chat template format."""
+    """Format a single example into chat template format.
+    
+    Appends the boxed instruction that Kaggle's eval pipeline adds,
+    so the model sees the same format during training and inference.
+    """
     return {
         "messages": [
-            {"role": "user", "content": prompt},
+            {"role": "user", "content": prompt + BOXED_INSTRUCTION},
             {"role": "assistant", "content": completion},
         ]
     }
@@ -368,6 +375,7 @@ def load_llm_cot() -> dict:
     cot_dirs = [
         os.path.join(DATA_DIR, "nemotron_cot"),
         os.path.join(DATA_DIR, "deepseek_cot"),
+        os.path.join(DATA_DIR, "deepseek8b_cot"),
         os.path.join(DATA_DIR, "qwen_cot"),
         os.path.join(DATA_DIR, "gemini_cot"),
     ]
@@ -425,6 +433,7 @@ def main():
     # Merge and generate CoT
     all_records = []
     llm_used = 0
+    dropped_unverified = 0
     for source_name, records in datasets.items():
         for record in records:
             cat = record["category"]
@@ -437,6 +446,11 @@ def main():
                 completion = llm_cot[rid]
                 llm_used += 1
             else:
+                # Drop unverified examples without LLM CoT —
+                # their answers are unconfirmed and template CoT is weak
+                if source_name == "unverified":
+                    dropped_unverified += 1
+                    continue
                 cot_gen = COT_GENERATORS.get(cat, cot_algebra)
                 completion = cot_gen(prompt, answer)
 
@@ -447,6 +461,8 @@ def main():
             all_records.append(formatted)
 
     print(f"  LLM CoT used for {llm_used} examples (replacing template CoT)")
+    if dropped_unverified:
+        print(f"  Dropped {dropped_unverified} unverified examples (no LLM CoT available)")
 
     # Add synthetic data
     synth_records = load_synthetic_data()
@@ -466,6 +482,22 @@ def main():
 
     if synth_records:
         print(f"  Added {len(synth_records)} synthetic examples")
+
+    # Upsample weak categories to give the model more practice
+    UPSAMPLE = {
+        "algebra": 2,
+        "bit_manipulation": 2,
+    }
+    upsampled = []
+    for r in all_records:
+        cat = r.get("category", "")
+        reps = UPSAMPLE.get(cat, 1)
+        for _ in range(reps):
+            upsampled.append(r)
+    upsample_delta = len(upsampled) - len(all_records)
+    if upsample_delta:
+        print(f"  Upsampled weak categories: +{upsample_delta} examples ({len(all_records)} → {len(upsampled)})")
+    all_records = upsampled
 
     # Shuffle
     random.seed(42)

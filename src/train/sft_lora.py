@@ -1,13 +1,9 @@
 #!/usr/bin/env python3
 """
-Phase 4: LoRA SFT Fine-Tuning — Optimized for 4x RTX 6000 Ada (48GB each)
+Phase 5: LoRA SFT Fine-Tuning — Optimized for 4x RTX 6000 Ada (48GB each)
 ==========================================================================
-Maximizes GPU memory utilization with:
-  - bf16 across 4 GPUs (Mamba layers incompatible with bitsandbytes)
-  - Batch size 8 per device with gradient accumulation 4 = effective batch 32
-  - 3 full training epochs (~1,497 steps, ~15 hours at ~37s/step)
-  - Gradient checkpointing to trade compute for memory
-  - Max sequence length 2048
+v5 changes: 5 epochs (from 3), lr=1.5e-4 (from 2e-4), warmup=5%,
+upsampled weak categories, more synthetic data, max_seq_length=2560.
 
 Run standalone:
   cd /scratch2/atang/competitions/nemotron-kaggle
@@ -25,7 +21,7 @@ from trl import SFTTrainer, SFTConfig
 # ---- Configuration ---- #
 MODEL_NAME = "/scratch2/atang/competitions/nemotron-kaggle/models/nemotron-base"
 DATA_DIR = "/scratch2/atang/competitions/nemotron-kaggle/data"
-OUTPUT_DIR = "/scratch2/atang/competitions/nemotron-kaggle/outputs/sft_v4"
+OUTPUT_DIR = "/scratch2/atang/competitions/nemotron-kaggle/outputs/sft_v5"
 
 # LoRA config (rank must be <= 32 per competition rules)
 LORA_R = 32
@@ -37,12 +33,12 @@ LORA_TARGET_MODULES = [
 ]
 
 # Training config — pipeline parallel (device_map=auto) with 4x48GB GPUs
-NUM_EPOCHS = 3
+NUM_EPOCHS = 5
 BATCH_SIZE = 6          # per-device batch size
 GRADIENT_ACCUMULATION_STEPS = 5   # effective batch = 6 * 5 = 30
-LEARNING_RATE = 2e-4
-MAX_SEQ_LENGTH = 2048
-WARMUP_RATIO = 0.03
+LEARNING_RATE = 1.5e-4
+MAX_SEQ_LENGTH = 2560
+WARMUP_RATIO = 0.05
 
 
 def messages_to_text(messages):

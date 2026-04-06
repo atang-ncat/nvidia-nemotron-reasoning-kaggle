@@ -16,11 +16,25 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."
 
 
 def extract_boxed(text: str) -> str:
-    """Extract answer from \\boxed{...} format, matching Kaggle's logic."""
-    # Try boxed with nested braces support
-    matches = re.findall(r"\\boxed\{([^}]+)\}", text)
-    if matches:
-        return matches[-1].strip()
+    """Extract answer from \\boxed{...} format, matching Kaggle's logic.
+    
+    Uses brace-depth counting to handle nested braces correctly.
+    E.g., \\boxed{f(x)} or \\boxed{a{b}c} are parsed properly.
+    """
+    # Find the LAST \\boxed{ occurrence (model may produce multiple)
+    idx = text.rfind("\\boxed{")
+    if idx != -1:
+        start = idx + len("\\boxed{")
+        depth = 1
+        i = start
+        while i < len(text) and depth > 0:
+            if text[i] == '{':
+                depth += 1
+            elif text[i] == '}':
+                depth -= 1
+            i += 1
+        if depth == 0:
+            return text[start:i-1].strip()
 
     # Try Result: pattern (our CoT template uses this)
     result_match = re.search(r"Result:\s*(.+)$", text, re.MULTILINE)
@@ -194,6 +208,29 @@ def main():
         if not grade_answer(predicted, expected) and error_count < 5:
             print(f"  [{categories[i]}] Expected: {expected}, Got: {predicted}")
             error_count += 1
+
+    # Save per-example predictions for error analysis
+    adapter_name = os.path.basename(os.path.dirname(args.adapter)) if args.adapter else "zero_shot"
+    predictions_path = os.path.join(
+        os.path.dirname(args.adapter) if args.adapter else "outputs",
+        "eval_predictions.jsonl"
+    )
+    with open(predictions_path, "w") as f:
+        for i, output in enumerate(outputs):
+            generated_text = output.outputs[0].text
+            predicted = extract_boxed(generated_text)
+            expected = expected_answers[i]
+            record = {
+                "id": eval_data[i].get("id", f"sample_{i}"),
+                "category": categories[i],
+                "expected": expected,
+                "predicted": predicted,
+                "correct": grade_answer(predicted, expected),
+                "source": eval_data[i].get("source", "unknown"),
+                "generated_text": generated_text[:2000],  # truncate to save space
+            }
+            f.write(json.dumps(record) + "\n")
+    print(f"\n💾 Per-example predictions saved to: {predictions_path}")
 
 
 if __name__ == "__main__":
