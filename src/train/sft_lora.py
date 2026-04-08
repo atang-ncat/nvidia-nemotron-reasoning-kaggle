@@ -32,10 +32,10 @@ LORA_TARGET_MODULES = [
     "gate_proj", "up_proj", "down_proj",
 ]
 
-# Training config — pipeline parallel (device_map=auto) with 4x48GB GPUs
+# Training config — balanced across 4x48GB GPUs
 NUM_EPOCHS = 5
-BATCH_SIZE = 6          # per-device batch size
-GRADIENT_ACCUMULATION_STEPS = 5   # effective batch = 6 * 5 = 30
+BATCH_SIZE = 10
+GRADIENT_ACCUMULATION_STEPS = 3   # effective batch = 10 * 3 = 30
 LEARNING_RATE = 1.5e-4
 MAX_SEQ_LENGTH = 2560
 WARMUP_RATIO = 0.05
@@ -77,10 +77,29 @@ def main():
         tokenizer.pad_token_id = tokenizer.eos_token_id
 
     # 2. Model in bf16
-    print("[2/6] Loading model (bf16, device_map=auto across 4 GPUs)...")
+    # Custom device map: GPU 3 holds lm_head which needs huge memory for the
+    # logits tensor (batch × seq × 131072 vocab × 2 bytes). Give it fewer
+    # transformer layers to leave headroom for that computation.
+    os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
+    n_layers = 52
+    n_gpus = torch.cuda.device_count()
+    device_map = {"backbone.embeddings": 0, "backbone.norm_f": n_gpus - 1, "lm_head": n_gpus - 1}
+    # Tuned per runtime memory: GPU 0 has embedding overhead, GPU 3 has
+    # lm_head logits overhead (~13GB at batch=10). GPUs 1-2 get more layers.
+    layers_per_gpu = [11, 19, 19, 3]  # total = 52
+    idx = 0
+    for gpu, count in enumerate(layers_per_gpu):
+        for _ in range(count):
+            device_map[f"backbone.layers.{idx}"] = gpu
+            idx += 1
+
+    layer_counts = {}
+    for v in device_map.values():
+        layer_counts[v] = layer_counts.get(v, 0) + 1
+    print(f"[2/6] Loading model (bf16, custom device_map: {dict(sorted(layer_counts.items()))})...")
     model = AutoModelForCausalLM.from_pretrained(
         MODEL_NAME,
-        device_map="auto",
+        device_map=device_map,
         torch_dtype=torch.bfloat16,
         trust_remote_code=True,
     )
