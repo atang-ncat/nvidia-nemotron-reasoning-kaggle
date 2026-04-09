@@ -4,6 +4,9 @@ Local Evaluation Script
 =======================
 Mimics the Kaggle evaluation setup: loads the base model with vLLM,
 attaches a LoRA adapter, runs inference, and computes per-category accuracy.
+
+v7: Uses the model's native chat template for prompt formatting, matching
+    Kaggle's inference format exactly.
 """
 
 import sys
@@ -85,7 +88,7 @@ def main():
                         default="/scratch2/atang/competitions/nemotron-kaggle/data/sft_val.jsonl",
                         help="Path to evaluation data (JSONL)")
     parser.add_argument("--model", type=str,
-                        default="/scratch2/atang/competitions/nemotron-kaggle/models/nemotron-base",
+                        default="/scratch2/atang/competitions/nemotron-kaggle/models/nemotron-instruct",
                         help="Path to base model")
     parser.add_argument("--max-samples", type=int, default=None,
                         help="Max samples to evaluate")
@@ -135,9 +138,13 @@ def main():
         temperature=0.0,
         top_p=1.0,
         max_tokens=7680,
+        stop=["<|im_end|>"],
     )
 
-    # Prepare prompts — wrap in training format
+    # Prepare prompts — use model's native chat template (matches Kaggle)
+    from transformers import AutoTokenizer
+    tokenizer = AutoTokenizer.from_pretrained(args.model, trust_remote_code=True)
+
     prompts = []
     expected_answers = []
     categories = []
@@ -145,8 +152,13 @@ def main():
     for record in eval_data:
         msgs = record["messages"]
         raw_prompt = msgs[0]["content"]
-        # Wrap in the same format we trained with
-        formatted_prompt = "### Question:\n" + raw_prompt + "\n\n### Answer:\n"
+        user_messages = [{"role": "user", "content": raw_prompt}]
+        formatted_prompt = tokenizer.apply_chat_template(
+            user_messages,
+            tokenize=False,
+            add_generation_prompt=True,
+            enable_thinking=True,
+        )
         expected = extract_boxed(msgs[1]["content"])
         prompts.append(formatted_prompt)
         expected_answers.append(expected)

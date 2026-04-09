@@ -1,9 +1,14 @@
 #!/usr/bin/env python3
 """
-Phase 5: LoRA SFT Fine-Tuning — Optimized for 4x RTX 6000 Ada (48GB each)
+Phase 6: LoRA SFT Fine-Tuning — Optimized for 4x RTX 6000 Ada (48GB each)
 ==========================================================================
-v5 changes: 5 epochs (from 3), lr=1.5e-4 (from 2e-4), warmup=5%,
-upsampled weak categories, more synthetic data, max_seq_length=2560.
+v7 changes (from v6):
+  - Switch from manual "### Question/Answer" format to the model's native
+    Nemotron chat template (<|im_start|>user/assistant + <think> tags)
+  - This matches the format Kaggle uses for inference, eliminating the
+    train/inference format mismatch that was limiting LB scores
+  - SFT data now has <think>...</think> wrapped reasoning traces
+  - EOS is handled natively by the chat template (<|im_end|>)
 
 Run standalone:
   cd /scratch2/atang/competitions/nemotron-kaggle
@@ -19,9 +24,9 @@ from peft import LoraConfig, get_peft_model
 from trl import SFTTrainer, SFTConfig
 
 # ---- Configuration ---- #
-MODEL_NAME = "/scratch2/atang/competitions/nemotron-kaggle/models/nemotron-base"
+MODEL_NAME = "/scratch2/atang/competitions/nemotron-kaggle/models/nemotron-instruct"
 DATA_DIR = "/scratch2/atang/competitions/nemotron-kaggle/data"
-OUTPUT_DIR = "/scratch2/atang/competitions/nemotron-kaggle/outputs/sft_v5"
+OUTPUT_DIR = "/scratch2/atang/competitions/nemotron-kaggle/outputs/sft_v7"
 
 # LoRA config (rank must be <= 32 per competition rules)
 LORA_R = 32
@@ -33,7 +38,7 @@ LORA_TARGET_MODULES = [
 ]
 
 # Training config — balanced across 4x48GB GPUs
-NUM_EPOCHS = 5
+NUM_EPOCHS = 2
 BATCH_SIZE = 10
 GRADIENT_ACCUMULATION_STEPS = 3   # effective batch = 10 * 3 = 30
 LEARNING_RATE = 1.5e-4
@@ -41,25 +46,22 @@ MAX_SEQ_LENGTH = 2560
 WARMUP_RATIO = 0.05
 
 
-def messages_to_text(messages):
-    """Convert chat messages to raw text for base model training."""
-    parts = []
-    for msg in messages:
-        if msg["role"] == "user":
-            parts.append("### Question:\n" + msg["content"])
-        elif msg["role"] == "assistant":
-            parts.append("### Answer:\n" + msg["content"])
-    return "\n\n".join(parts)
+def load_sft_data(split, tokenizer):
+    """Load SFT data and format with the model's native chat template.
 
-
-def load_sft_data(split):
-    """Load SFT data from JSONL and convert to text format."""
+    Uses tokenizer.apply_chat_template so the training text matches
+    the exact token sequence Kaggle sees during inference.
+    """
     path = os.path.join(DATA_DIR, f"sft_{split}.jsonl")
     texts = []
     with open(path) as f:
         for line in f:
             record = json.loads(line)
-            text = messages_to_text(record["messages"])
+            text = tokenizer.apply_chat_template(
+                record["messages"],
+                tokenize=False,
+                add_generation_prompt=False,
+            )
             texts.append({"text": text})
     return Dataset.from_list(texts)
 
@@ -130,8 +132,8 @@ def main():
 
     # 4. Data
     print("[4/6] Loading data...")
-    train_dataset = load_sft_data("train")
-    val_dataset = load_sft_data("val")
+    train_dataset = load_sft_data("train", tokenizer)
+    val_dataset = load_sft_data("val", tokenizer)
     print(f"  Train: {len(train_dataset)} examples")
     print(f"  Val:   {len(val_dataset)} examples")
 

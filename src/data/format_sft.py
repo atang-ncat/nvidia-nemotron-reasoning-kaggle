@@ -5,9 +5,9 @@ Phase 3: SFT Data Formatter
 Merges verified + corrected + unverified data, generates Chain-of-Thought
 reasoning templates, and outputs the final SFT-ready dataset.
 
-Each training example is formatted as:
+v7: Uses Nemotron native chat format with <think>...</think> tags.
   prompt: <original puzzle prompt>
-  completion: <CoT reasoning>\n\n\\boxed{answer}
+  completion: <think>\n<reasoning>\n</think>\n\\boxed{answer}
 """
 
 import sys
@@ -352,19 +352,37 @@ COT_GENERATORS = {
 }
 
 
-BOXED_INSTRUCTION = "\n\nPlease put your final answer inside \\boxed{}. For example: \\boxed{your answer}"
+BOXED_INSTRUCTION = "\n\nPlease put your final answer inside \\boxed{}."
+
+
+def wrap_completion_in_think(completion: str) -> str:
+    """Wrap a completion in <think>...</think> format for Nemotron chat template.
+
+    Separates reasoning from the final \\boxed{} answer so that reasoning
+    lives inside <think> tags and the boxed answer follows </think>.
+    Skips wrapping if <think> tags are already present.
+    """
+    if "<think>" in completion:
+        return completion
+
+    idx = completion.rfind("\\boxed{")
+    if idx >= 0:
+        reasoning = completion[:idx].rstrip()
+        boxed = completion[idx:]
+        return f"<think>\n{reasoning}\n</think>\n{boxed}"
+    return f"<think>\n{completion}\n</think>"
 
 
 def format_chat_template(prompt: str, completion: str) -> dict:
     """Format a single example into chat template format.
-    
-    Appends the boxed instruction that Kaggle's eval pipeline adds,
-    so the model sees the same format during training and inference.
+
+    Wraps reasoning in <think>...</think> to match the Nemotron native
+    chat template that Kaggle uses for inference.
     """
     return {
         "messages": [
             {"role": "user", "content": prompt + BOXED_INSTRUCTION},
-            {"role": "assistant", "content": completion},
+            {"role": "assistant", "content": wrap_completion_in_think(completion)},
         ]
     }
 
@@ -483,10 +501,13 @@ def main():
     if synth_records:
         print(f"  Added {len(synth_records)} synthetic examples")
 
-    # Upsample weak categories to give the model more practice
+    # Upsample weak categories to balance the dataset (~4k per category)
+    # algebra & bit_manipulation already have ~4k from synthetic data
     UPSAMPLE = {
-        "algebra": 2,
-        "bit_manipulation": 2,
+        "gravity": 3,
+        "unit_conversion": 3,
+        "numeral": 3,
+        "text_encryption": 7,
     }
     upsampled = []
     for r in all_records:
