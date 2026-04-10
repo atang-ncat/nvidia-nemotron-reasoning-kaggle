@@ -1,7 +1,7 @@
 # Data files
 data/raw/
 data/curated/
-data/sft_*.jsonl
+# data/sft_*.jsonl  # un-ignored: committed for Colab reproducibility
 data/synthetic/
 
 # Model weights
